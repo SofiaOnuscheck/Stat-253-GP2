@@ -1,0 +1,188 @@
+---
+title: "Your Title"
+subtitle: "Stat 253"
+author: "Sofie Onuscheck"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_download: true
+---
+
+```{r include=FALSE}
+# Load packages (include others that are needed)
+library(tidyverse)
+library(tidymodels)
+library(rpart)        # for building trees
+library(rpart.plot)   # for plotting trees
+library(randomForest) # for bagging & forests
+library(infer) 
+
+# Resolves package conflicts by preferring tidymodels functions
+tidymodels_prefer()
+
+#Read in dataset
+
+jump_data<-read_csv("https://bcheggeseth.github.io/253_spring_2024/data/kangaroo.csv") %>%
+  mutate(species  = factor(species)) #%>%
+  #select( crest.width, basilar.length, occipitonasal.length, nasal.length, ramus.height, nasal.width,squamosal.depth,zygomatic.width )
+
+jump_data
+```
+
+# Research Goals
+
+Briefly describe your goals for this report. Provide some context to understand your goals.
+
+# Data
+
+Briefly describe your training data. You may use 1 visualization in this section.
+
+
+```{r message=FALSE, warning = FALSE, echo=FALSE}
+# read in data
+# clean data, if necessary
+```
+
+```{r message=FALSE, warning = FALSE, echo=FALSE}
+# visualization
+```
+
+# Model Building
+
+Describe the process by which you came up with the final model. This does not include every step you took but rather the final path your group decided on to build a model. 
+
+# Implementation
+
+We used tidymodels to implement this model building process. See code below for full details.
+
+<details>
+<summary>View Code</summary>
+
+
+```{r message=FALSE, warning = FALSE}
+#Include all model building code in here.
+
+set.seed(253)
+
+rf_spec <- rand_forest()  %>%
+  set_mode("classification") %>%
+  set_engine(engine = "ranger") %>% 
+  set_args(
+    mtry = NULL,
+    trees = 500,
+    min_n = 2,
+    probability = FALSE, 
+    importance = "impurity" 
+  )
+
+Kangaroo_forest  <- rf_spec %>%
+  fit(species ~ . - sex, data = jump_data)
+Kangaroo_forest
+
+Kangaroo_forest %>% 
+  extract_fit_engine() %>% 
+  pluck("confusion.matrix") %>% 
+  t()
+
+
+```
+```{r}
+Kangaroo_forest %>%
+  extract_fit_engine() %>%
+  pluck("variable.importance")
+```
+
+```{r}
+rf_spec <- rand_forest()  %>%
+  set_mode("classification") %>%
+  set_engine(engine = "ranger") %>% 
+  set_args(
+    mtry = 19,
+    trees = 500,
+    min_n = 2,
+    probability = FALSE, # give classifications, not probability calculations
+    importance = "impurity" # use Gini index to measure variable importance
+  )
+
+# STEP 2: Build the forest or bagging model
+# There are no preprocessing steps or tuning, hence no need for a workflow!
+Bagging_jump <- rf_spec %>% 
+  fit(species ~ ., data = jump_data)
+
+Bagging_jump
+
+Bagging_jump %>% 
+  extract_fit_engine() %>% 
+  pluck("confusion.matrix") %>% 
+  t()
+
+
+```
+
+```{r}
+knn_spec <- nearest_neighbor() %>%
+  set_mode("classification") %>% 
+  set_engine(engine = "kknn") %>% 
+  set_args(neighbors = tune())
+
+
+variable_recipe <- recipe(species ~ ., data = jump_data) %>% 
+  step_nzv(all_predictors()) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>%
+  step_impute_knn(all_predictors()) 
+```
+
+```{r eval = FALSE}
+knn_workflow <- workflow() %>% 
+  add_recipe(variable_recipe) %>% 
+  add_model(knn_spec)
+```
+
+```{r}
+set.seed(253)
+knn_model <- knn_workflow %>% 
+  tune_grid(
+    grid = grid_regular(neighbors(range = c(1,100)), levels = 10),
+    resamples = vfold_cv(jump_data, v = 10),
+    metrics = metric_set(accuracy)
+  )
+
+
+```
+
+```{r eval = FALSE}
+# Calculate CV MAE for each KNN model
+knn_model %>% 
+  collect_metrics()
+
+# Plot CV MAE (y-axis) for the KNN model from each K (x-axis)
+autoplot(knn_model)
+
+# Identify K which produced the lowest ("best") CV MAE
+best_K <- select_best(knn_model, metric = "accuracy")
+best_K
+
+# Get the CV MAE for KNN when using best_K
+knn_model %>% 
+  collect_metrics() %>% 
+  filter(neighbors == best_K$neighbors)
+```
+
+
+
+```{r eval = FALSE}
+# parameters = final K value (best_K or whatever other value you might want)
+final_knn_model <- knn_workflow %>% 
+  finalize_workflow(parameters = best_K) %>% 
+  fit(data = jump_data)
+
+final_knn_model %>% 
+  predict(new_data = jump_data)   
+```
+
+# Contributions
+
+Describe each student's concrete contribution to this project. 
+
